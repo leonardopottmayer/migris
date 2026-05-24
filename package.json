@@ -17,16 +17,19 @@
     "dist",
     "README.md"
   ],
+  "engines": {
+    "node": ">=24"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/leonardopottmayer/pottmayer-migris.git"
+    "url": "git+https://github.com/leonardopottmayer/migris.git"
   },
   "author": "Leonardo Gian Pottmayer",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/leonardopottmayer/pottmayer-migris/issues"
+    "url": "https://github.com/leonardopottmayer/migris/issues"
   },
-  "homepage": "https://github.com/leonardopottmayer/pottmayer-migris#readme",
+  "homepage": "https://github.com/leonardopottmayer/migris#readme",
   "dependencies": {
     "commander": "^14.0.0",
     "pg": "^8.16.0"

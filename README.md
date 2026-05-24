@@ -2,7 +2,7 @@
 
 CLI tool for managing PostgreSQL database migrations using plain `.sql` files.
 
-Each migration lives in a timestamped folder with an `up.sql` and a `down.sql` — no ORM, no magic, just SQL.
+Each migration lives in a timestamped folder with an `up.sql` and a `down.sql` file. No ORM, no magic, just SQL.
 
 ---
 
@@ -42,8 +42,8 @@ npm install -g migris
 ### From source
 
 ```bash
-git clone https://github.com/leonardopottmayer/pottmayer-migris
-cd pottmayer-migris
+git clone https://github.com/leonardopottmayer/migris
+cd migris
 npm install
 npm run build
 npm link
@@ -54,6 +54,12 @@ To unlink:
 ```bash
 npm unlink -g migris
 ```
+
+### Node.js version
+
+For development, this repository uses Node `24.15.0` via `.nvmrc`.
+
+For installing and running the published package, `migris` supports Node `24` and newer.
 
 ---
 
@@ -109,7 +115,7 @@ Create a `config.json` file in the directory where you run `migris` or `mg` comm
 
 ### Environment Variable Overrides
 
-Any value in `config.json` can be overridden with environment variables — useful in CI/CD pipelines where secrets should not be stored in files:
+Any value in `config.json` can be overridden with environment variables, which is useful in CI/CD pipelines where secrets should not be stored in files:
 
 | Environment Variable | Overrides  |
 |----------------------|------------|
@@ -131,18 +137,18 @@ MIGRIS_DB_PASSWORD=supersecret migris apply prod
 
 ```
 migrations/
-├── 20250523120000-create-users-table/
-│   ├── 20250523120000-create-users-table.up.sql
-│   └── 20250523120000-create-users-table.down.sql
-├── 20250523130000-add-orders-table/
-│   ├── 20250523130000-add-orders-table.up.sql
-│   └── 20250523130000-add-orders-table.down.sql
+|-- 20250523120000-create-users-table/
+|   |-- 20250523120000-create-users-table.up.sql
+|   `-- 20250523120000-create-users-table.down.sql
+`-- 20250523130000-add-orders-table/
+    |-- 20250523130000-add-orders-table.up.sql
+    `-- 20250523130000-add-orders-table.down.sql
 ```
 
 - **Folder name:** `{YYYYMMDDHHmmss}-{migration-name}`
 - **Files:** `{folder-name}.up.sql` and `{folder-name}.down.sql`
 - Migrations are applied in **alphabetical order** (which is chronological given the timestamp prefix).
-- Both `up.sql` and `down.sql` must be present — `migris apply` will refuse to run if any migration is incomplete.
+- Both `up.sql` and `down.sql` must be present. `migris apply` will refuse to run if any migration is incomplete.
 
 ---
 
@@ -188,9 +194,9 @@ Invalid examples: `CreateUsers`, `create_users`, `create users`, `-start`, `end-
 
 ```
 migrations/
-└── 20250523120000-create-users-table/
-    ├── 20250523120000-create-users-table.up.sql
-    └── 20250523120000-create-users-table.down.sql
+`-- 20250523120000-create-users-table/
+    |-- 20250523120000-create-users-table.up.sql
+    `-- 20250523120000-create-users-table.down.sql
 ```
 
 ---
@@ -207,16 +213,16 @@ migris apply dev -y
 
 **Options:**
 
-| Flag        | Description                                          |
-|-------------|------------------------------------------------------|
+| Flag        | Description |
+|-------------|-------------|
 | `--dry-run` | Preview which migrations would be applied without executing them |
-| `-y, --yes` | Skip the confirmation prompt                         |
+| `-y, --yes` | Skip the confirmation prompt |
 
 **How it works:**
-1. Validates that every migration folder has both `up.sql` and `down.sql` — aborts if any are incomplete
+1. Validates that every migration folder has both `up.sql` and `down.sql`; aborts if any are incomplete
 2. Connects to the database and finds all migrations not yet in the `migrations` table with status `A`
 3. Shows a confirmation prompt (skipped with `-y` or in non-interactive/CI environments)
-4. Applies each pending migration inside a **transaction** — if one fails, it rolls back the transaction and marks the migration as `E` (error), then stops
+4. Applies each pending migration inside a **transaction**. If one fails, it rolls back the transaction and marks the migration as `E` (error), then stops
 5. Records a **SHA-256 checksum** of each `up.sql` so that modifications to already-applied migrations can be detected
 6. Groups applied migrations under the same `batch` number for easy rollback
 
@@ -225,7 +231,7 @@ migris apply dev -y
 If you modify a `up.sql` file after it has already been applied, `migris apply` will warn you:
 
 ```
-⚠️  Checksum mismatch on already-applied migration: 20250523120000-create-users-table
+Warning: checksum mismatch on already-applied migration: 20250523120000-create-users-table
 ```
 
 ---
@@ -243,16 +249,16 @@ migris rollback dev -y
 
 **Options:**
 
-| Flag        | Description                                           |
-|-------------|-------------------------------------------------------|
+| Flag        | Description |
+|-------------|-------------|
 | `--dry-run` | Preview which migrations would be rolled back without executing them |
-| `-y, --yes` | Skip the confirmation prompt                          |
+| `-y, --yes` | Skip the confirmation prompt |
 
 **How it works:**
 1. Without `migration_id`: finds the highest `application_batch_id` and rolls back all migrations in that batch
 2. With `migration_id`: finds that migration's batch, then rolls back it and every subsequent batch
 3. Migrations are rolled back in **reverse order** (newest first)
-4. Each `down.sql` runs inside a **transaction** — on failure, rolls back and marks as `E`, then stops
+4. Each `down.sql` runs inside a **transaction**. On failure, it rolls back and marks as `E`, then stops
 
 ---
 
@@ -269,32 +275,32 @@ migris status dev --json
 
 **Options:**
 
-| Flag          | Description                                    |
-|---------------|------------------------------------------------|
-| `--limit <n>` | Number of recent batches to show (default: 5)  |
-| `--all`       | Show all batches (overrides `--limit`)         |
+| Flag          | Description |
+|---------------|-------------|
+| `--limit <n>` | Number of recent batches to show (default: 5) |
+| `--all`       | Show all batches (overrides `--limit`) |
 
 **Output example:**
 
 ```
-📋 Last 2 batch(es) — environment: dev
+Last 2 batch(es) - environment: dev
 
   Batch #2:
-    [✓] 20250523130000-add-orders-table       2025-05-23 13:00:05
-    [✓] 20250523140000-add-indexes            2025-05-23 14:01:12
+    [OK] 20250523130000-add-orders-table       2025-05-23 13:00:05
+    [OK] 20250523140000-add-indexes            2025-05-23 14:01:12
 
   Batch #1:
-    [↩] 20250523120000-create-users-table     2025-05-23 12:05:33
+    [RB] 20250523120000-create-users-table     2025-05-23 12:05:33
 ```
 
 **Status symbols:**
 
-| Symbol | Status code | Meaning      |
-|--------|-------------|--------------|
-| `[✓]`  | `A`         | Applied      |
-| `[↩]`  | `R`         | Rolled back  |
+| Symbol | Status code | Meaning |
+|--------|-------------|---------|
+| `[OK]` | `A`         | Applied |
+| `[RB]` | `R`         | Rolled back |
 | `[!]`  | `E`         | Error/Failed |
-| `[?]`  | other       | Unknown      |
+| `[?]`  | other       | Unknown |
 
 ---
 
@@ -309,8 +315,8 @@ mg check prod --json
 ```
 
 **Exit codes:**
-- `0` — all migrations are applied (up to date)
-- `2` — there are pending migrations
+- `0` - all migrations are applied (up to date)
+- `2` - there are pending migrations
 
 **Example CI usage:**
 
@@ -326,8 +332,8 @@ mg check prod --json
 
 These flags work with any command:
 
-| Flag     | Description                                                        |
-|----------|--------------------------------------------------------------------|
+| Flag     | Description |
+|----------|-------------|
 | `--json` | Output results as JSON instead of human-readable text. Useful for scripts and CI. |
 
 **JSON output example for `migris status dev --json`:**
@@ -372,23 +378,23 @@ CREATE TABLE IF NOT EXISTS migrations (
 );
 ```
 
-| Column                 | Description                                                  |
-|------------------------|--------------------------------------------------------------|
-| `migration_id`         | The migration folder name (e.g. `20250523120000-create-users-table`) |
-| `status`               | `A` = applied, `R` = rolled back, `E` = error               |
-| `updated_at`           | Timestamp of the last status change                          |
-| `application_batch_id` | Batch number — all migrations applied together share the same batch |
-| `checksum`             | SHA-256 hash of the `up.sql` content at apply time           |
+| Column                 | Description |
+|------------------------|-------------|
+| `migration_id`         | The migration folder name (for example `20250523120000-create-users-table`) |
+| `status`               | `A` = applied, `R` = rolled back, `E` = error |
+| `updated_at`           | Timestamp of the last status change |
+| `application_batch_id` | Batch number. All migrations applied together share the same batch |
+| `checksum`             | SHA-256 hash of the `up.sql` content at apply time |
 
 ---
 
 ## Exit Codes
 
-| Code | Meaning                                         |
-|------|-------------------------------------------------|
-| `0`  | Success                                         |
+| Code | Meaning |
+|------|---------|
+| `0`  | Success |
 | `1`  | Error (connection failure, invalid config, SQL error, etc.) |
-| `2`  | Pending migrations exist (`migris check` only)  |
+| `2`  | Pending migrations exist (`migris check` only) |
 
 ---
 
@@ -418,7 +424,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 
 ### Notes for CI environments
 
-- **No TTY prompts:** confirmation prompts are automatically skipped when stdin is not a TTY (e.g. in GitHub Actions). Use `-y` explicitly if needed.
+- **No TTY prompts:** confirmation prompts are automatically skipped when stdin is not a TTY (for example in GitHub Actions). Use `-y` explicitly if needed.
 - **ENV var overrides:** use `MIGRIS_DB_*` environment variables instead of committing `config.json` with credentials to your repository.
 - **`--json` flag:** pipe structured output to other tools (`jq`, scripts, Slack notifications, etc.).
 
@@ -429,20 +435,20 @@ CREATE TABLE IF NOT EXISTS migrations (
 The project uses [Vitest](https://vitest.dev/) for testing.
 
 ```bash
-npm test          # run all tests once
-npm run test:watch  # watch mode
+npm test
+npm run test:watch
 ```
 
 **Test coverage:**
 
 | File | What is tested |
 |------|----------------|
-| `errors.test.ts` | `MigrisError` class — name, message, exit codes |
+| `errors.test.ts` | `MigrisError` class, message handling, exit codes |
 | `logger.test.ts` | Plain and JSON output modes, stdout vs stderr routing |
 | `checksum.test.ts` | SHA-256 correctness, determinism, sensitivity to changes |
 | `config.test.ts` | Config loading, error cases, ENV var overrides for all 5 fields |
 | `prompt.test.ts` | Auto-approval in non-TTY environments |
-| `create.test.ts` | Name validation (22 cases), file/directory creation, output |
+| `create.test.ts` | Name validation, file/directory creation, output |
 | `init.test.ts` | File creation, idempotency, config template shape |
 | `apply.test.ts` | Dry-run, transaction calls, error handling, alphabetical order |
 | `rollback.test.ts` | Dry-run, transaction calls, error handling, `targetMigrationId` |
@@ -454,51 +460,53 @@ npm run test:watch  # watch mode
 ## Development
 
 ```bash
-npm run build       # compile TypeScript → dist/
-npm test            # run tests
-npm run test:watch  # tests in watch mode
-npm link            # install migris and mg globally from local source
+nvm use
+npm install
+npm run build
+npm test
+npm run test:watch
+npm link
 ```
 
 **Project structure:**
 
 ```
 src/
-├── index.ts              # CLI entry point (Commander)
-├── errors.ts             # MigrisError with exit codes
-├── logger.ts             # log.info/success/warn/error + JSON mode
-├── checksum.ts           # SHA-256 for migration files
-├── prompt.ts             # interactive confirmation
-├── config.ts             # config.json loader + ENV var overrides
-├── db.ts                 # PostgreSQL client factory
-└── commands/
-    ├── init.ts           # migris init / mg init
-    ├── create.ts         # migris create / mg create
-    ├── apply.ts          # migris apply / mg apply
-    ├── rollback.ts       # migris rollback / mg rollback
-    ├── status.ts         # migris status / mg status
-    └── check.ts          # migris check / mg check
+|-- index.ts              # CLI entry point (Commander)
+|-- errors.ts             # MigrisError with exit codes
+|-- logger.ts             # log.info/success/warn/error + JSON mode
+|-- checksum.ts           # SHA-256 for migration files
+|-- prompt.ts             # interactive confirmation
+|-- config.ts             # config.json loader + ENV var overrides
+|-- db.ts                 # PostgreSQL client factory
+`-- commands/
+    |-- init.ts           # migris init / mg init
+    |-- create.ts         # migris create / mg create
+    |-- apply.ts          # migris apply / mg apply
+    |-- rollback.ts       # migris rollback / mg rollback
+    |-- status.ts         # migris status / mg status
+    `-- check.ts          # migris check / mg check
 
 tests/
-├── errors.test.ts
-├── logger.test.ts
-├── checksum.test.ts
-├── config.test.ts
-├── prompt.test.ts
-├── create.test.ts
-├── init.test.ts
-├── apply.test.ts
-├── rollback.test.ts
-├── status.test.ts
-└── check.test.ts
+|-- errors.test.ts
+|-- logger.test.ts
+|-- checksum.test.ts
+|-- config.test.ts
+|-- prompt.test.ts
+|-- create.test.ts
+|-- init.test.ts
+|-- apply.test.ts
+|-- rollback.test.ts
+|-- status.test.ts
+`-- check.test.ts
 
 .github/
-└── workflows/
-    └── ci.yml            # CI: build + test on Node 18/20/22 + publish dry-run
+`-- workflows/
+    `-- ci.yml            # CI: build + test on Node 24 + publish dry-run
 ```
 
 ---
 
 ## License
 
-ISC — Developed by Leonardo Gian Pottmayer
+ISC
