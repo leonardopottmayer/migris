@@ -4,7 +4,7 @@ docs/
 dist/**/*.map
 tsconfig.json
 vitest.config.ts
-config.json
+example-config.json
 .gitignore
 .github/
 *.test.ts
