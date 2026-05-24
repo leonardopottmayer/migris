@@ -1,0 +1,10 @@
+src/
+tests/
+docs/
+dist/**/*.map
+tsconfig.json
+vitest.config.ts
+config.json
+.gitignore
+.github/
+*.test.ts

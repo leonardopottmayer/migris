@@ -1,0 +1,41 @@
+{
+  "name": "migris",
+  "version": "1.0.0",
+  "description": "CLI tool for managing PostgreSQL database migrations using plain SQL files.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "bin": {
+    "migris": "./dist/index.js",
+    "mg": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leonardopottmayer/pottmayer-migris.git"
+  },
+  "author": "Leonardo Gian Pottmayer",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/leonardopottmayer/pottmayer-migris/issues"
+  },
+  "homepage": "https://github.com/leonardopottmayer/pottmayer-migris#readme",
+  "dependencies": {
+    "commander": "^14.0.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.15.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "vitest": "^2.0.0"
+  }
+}
