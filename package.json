@@ -1,6 +1,6 @@
 {
   "name": "migris",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI tool for managing PostgreSQL database migrations using plain SQL files.",
   "main": "dist/index.js",
   "scripts": {
