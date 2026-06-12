@@ -2,11 +2,16 @@
 
 import { Command } from "commander";
 import { createMigration } from "./commands/create";
+import { createObject } from "./commands/create-object";
 import { applyMigrations } from "./commands/apply";
 import { rollbackMigrations } from "./commands/rollback";
 import { showMigrationStatus } from "./commands/status";
 import { initProject } from "./commands/init";
 import { checkMigrations } from "./commands/check";
+import { validate } from "./commands/validate";
+import { drift } from "./commands/drift";
+import { environments } from "./commands/environments";
+import { eject } from "./commands/eject";
 import { setJsonMode } from "./logger";
 import { MigrisError } from "./errors";
 
@@ -49,12 +54,37 @@ program
   )
   .action(wrapAction(initProject));
 
-// migris create <name>
+// migris create <name> [--module <m>]
 program
   .command("create")
   .argument("<name>", "Migration name in kebab-case (e.g. create-users-table).")
   .description("Creates a new migration folder with up.sql and down.sql files.")
-  .action(wrapAction(createMigration));
+  .option("--module <module>", "Module to create the migration under (required in modular projects).")
+  .action(
+    wrapAction((name: string, options: { module?: string }) =>
+      createMigration(name, options)
+    )
+  );
+
+// migris create-object <object> [name]
+program
+  .command("create-object")
+  .argument("<object>", "Object identity (path under objects/ without .sql, e.g. notifications/views/v-not-pending).")
+  .argument("[name]", "Migration name in kebab-case. Omit with --amend / --rebase.")
+  .description("Compiles an object source file into a migration. Offline — never touches the database.")
+  .option("--amend", "Rewrite the object's most recent migration in place (draft).")
+  .option("--tenant <env>", "Compile from a tenant overlay (object override).")
+  .option("--rebase", "Reconcile a tenant override: regenerate and advance forkedFrom to the current common version.")
+  .option("--dry-run", "Print the up/down/meta that would be generated, without writing.")
+  .action(
+    wrapAction(
+      (
+        object: string,
+        name: string | undefined,
+        options: { amend?: boolean; tenant?: string; rebase?: boolean; dryRun?: boolean }
+      ) => createObject(object, name, options)
+    )
+  );
 
 // migris apply <env>
 program
@@ -108,6 +138,45 @@ program
     "Checks if all migrations are applied. Exits with code 2 if there are pending migrations (useful in CI pipelines)."
   )
   .action(wrapAction(checkMigrations));
+
+// migris validate [--strict]
+program
+  .command("validate")
+  .description("Checks module boundaries: flags cross-module schema references. Offline.")
+  .option("--strict", "Exit non-zero if any boundary violation is found (CI gate).")
+  .action(wrapAction((options: { strict?: boolean }) => validate(options)));
+
+// migris drift <env>
+program
+  .command("drift")
+  .argument("<env>", "Tenant environment to inspect.")
+  .description("Lists overridden objects that fell behind the common version (fork radar). Offline.")
+  .option("--strict", "Exit non-zero if any overridden object is behind (CI gate).")
+  .action(wrapAction((env: string, options: { strict?: boolean }) => drift(env, options)));
+
+// migris environments
+program
+  .command("environments")
+  .description("Lists the environments declared in config.json (use --json for a CI matrix).")
+  .action(wrapAction(() => environments()));
+
+// migris eject [module]
+program
+  .command("eject")
+  .argument("[module]", "Module to eject (sugar for --module <module>).")
+  .description("Extracts a module and/or a tenant into a standalone migris project. Offline.")
+  .option("--module <module>", "Module to eject (vertical: service + default).")
+  .option("--tenant <env>", "Tenant to eject (horizontal: resolved single-tenant project).")
+  .option("--out <path>", "Destination directory for the ejected project.")
+  .option("--squash", "Collapse everything into a single baseline migration (new DB only).")
+  .action(
+    wrapAction(
+      (
+        moduleArg: string | undefined,
+        options: { module?: string; tenant?: string; out?: string; squash?: boolean }
+      ) => eject({ ...options, module: options.module ?? moduleArg })
+    )
+  );
 
 program.parse(process.argv);
 

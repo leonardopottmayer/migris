@@ -10,8 +10,31 @@ export interface EnvironmentConfig {
   database: string;
 }
 
-interface MigrisConfig {
+export interface MigrisConfig {
   environments: Record<string, EnvironmentConfig>;
+}
+
+/**
+ * Loads and parses config.json without selecting an environment. Used by
+ * commands that operate over the whole environment list (environments, eject).
+ */
+export function loadRawConfig(): MigrisConfig {
+  const configPath = path.join(process.cwd(), "config.json");
+
+  if (!fs.existsSync(configPath)) {
+    throw new MigrisError(
+      `config.json not found in the current directory.\nRun "migris init" to create a template.`
+    );
+  }
+
+  try {
+    const raw = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw) as MigrisConfig;
+    return { environments: parsed.environments ?? {} };
+  } catch (err) {
+    if (err instanceof MigrisError) throw err;
+    throw new MigrisError("config.json is not valid JSON.");
+  }
 }
 
 /**

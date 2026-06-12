@@ -4,6 +4,8 @@ CLI tool for managing PostgreSQL database migrations using plain `.sql` files.
 
 Each migration lives in a timestamped folder with an `up.sql` and a `down.sql` file. No ORM, no magic, just SQL.
 
+migris scales from a single flat timeline up to a **modular, multi-tenant** project — and can **eject** any module or tenant into its own standalone project. All of that is **opt-in by structure**: a simple project stays simple, and everything you already had keeps working unchanged.
+
 ---
 
 ## Table of Contents
@@ -14,13 +16,26 @@ Each migration lives in a timestamped folder with an `up.sql` and a `down.sql` f
   - [config.json](#configjson)
   - [Environment Variable Overrides](#environment-variable-overrides)
 - [Migration Structure](#migration-structure)
+- [Project Modes](#project-modes)
+- [Modules](#modules)
+- [Versioned Objects](#versioned-objects)
+  - [The `.meta.json` file](#the-metajson-file)
+- [Multi-Tenant](#multi-tenant)
+  - [Object overrides & suppression](#object-overrides--suppression)
+  - [Fork drift](#fork-drift)
+- [Eject](#eject)
 - [Commands](#commands)
   - [migris init](#migris-init-env)
-  - [migris create](#migris-create-name)
+  - [migris create](#migris-create-name---module-m)
+  - [migris create-object](#migris-create-object-object-name)
   - [migris apply](#migris-apply-env)
   - [migris rollback](#migris-rollback-env-migration_id)
   - [migris status](#migris-status-env)
   - [migris check](#migris-check-env)
+  - [migris validate](#migris-validate---strict)
+  - [migris drift](#migris-drift-env)
+  - [migris environments](#migris-environments)
+  - [migris eject](#migris-eject)
 - [Global Flags](#global-flags)
 - [Database Schema](#database-schema)
 - [Exit Codes](#exit-codes)
@@ -152,6 +167,162 @@ migrations/
 
 ---
 
+## Project Modes
+
+migris **detects the mode from your folder structure** — there is no flag to "enable modules". Modes combine freely (flat + tenants, modular + tenants, modular without tenants, etc.).
+
+| Signal on disk | Mode |
+|----------------|------|
+| Migration folders **directly** inside `migrations/` | **Flat** (no modules) |
+| `migrations/` contains **only module subfolders** (each holding migrations) | **Modular** (each subfolder is a module; the base is `default`) |
+| A `tenants/` folder exists | **Multi-tenant** enabled |
+| No `tenants/` folder | **Single-tenant** |
+
+An empty project is flat. Passing `--module` on the very first `create` bootstraps a modular project.
+
+Everything else in migris (apply, rollback, status, check, ids, the `migrations` table) is **unchanged** by the mode — a flat single-tenant project behaves exactly as it always did.
+
+---
+
+## Modules
+
+In a modular project, each top-level folder under `migrations/` is a **module** (typically one schema):
+
+```
+pandora/
+├─ migrations/
+│  ├─ default/          ← extensions, global functions — ALWAYS included
+│  │  └─ 20260131152820-create-extension-pgcrypto/...
+│  ├─ identity/
+│  │  └─ 20260131153000-create-schema-identity/...
+│  └─ notifications/
+│     └─ 20260604120000-create-schema-notifications/...
+└─ objects/
+   ├─ default/  identity/  notifications/
+```
+
+- **`default` is special:** it is the base/catch-all (extensions, global helpers) and is **always included** in every apply, eject and tenant.
+- **`migration_id` is still the leaf folder name** (e.g. `20260604120000-create-schema-notifications`). The module folder is **not** part of the id, so moving a migration between modules does not change its id — already-applied databases don't notice. Ids must be **globally unique** across all modules and overlays.
+- **Ordering is global:** migris merge-sorts every migration by its 14-digit timestamp regardless of module. The folder is only a selection label; it never changes execution order.
+- **Boundary validation:** a migration inside module `M` should only reference its own schema or `default`. Referencing another module's schema is flagged (see [`migris validate`](#migris-validate---strict)). This is what keeps modules cleanly [ejectable](#eject).
+
+---
+
+## Versioned Objects
+
+Database objects that are **idempotent via `CREATE OR REPLACE`** — `FUNCTION`, `PROCEDURE`, `VIEW`, and (PG14+) `TRIGGER` — can live as a **single source-of-truth file** under `objects/`. The file gives you the **current state** (just open it) and the **history** (`git log` of that one file).
+
+> Structural/stateful objects (`TABLE`, `TYPE`/`ENUM`, `MATERIALIZED VIEW`, indexes, constraints) are **not** replaceable and stay as ordinary versioned migrations.
+
+An object's **identity** is its path relative to `objects/`, without `.sql`:
+
+| Mode | File | Identity |
+|------|------|----------|
+| Flat | `objects/views/v-active-users.sql` | `views/v-active-users` |
+| Modular | `objects/notifications/views/v-not-pending.sql` | `notifications/views/v-not-pending` |
+
+You edit the object file, then run [`migris create-object`](#migris-create-object-object-name) to **compile** it into an ordinary migration. The flow is always **object → migration**:
+
+| Migration | `up.sql` | `down.sql` |
+|-----------|----------|------------|
+| v1 | `CREATE OR REPLACE` → **v1** | **you write it** (usually a `DROP`) |
+| v2 | `CREATE OR REPLACE` → **v2** | `CREATE OR REPLACE` → v1 *(generated)* |
+| v3 | `CREATE OR REPLACE` → **v3** | `CREATE OR REPLACE` → v2 *(generated)* |
+
+From v2 on, the previous version's `up.sql` becomes the new `down.sql` **for free** — migris never parses the object's SQL. The generated migration is then a completely ordinary one (same apply, rollback, checksum, batch).
+
+Generation is **100% offline** — `create-object` never connects to a database.
+
+### The `.meta.json` file
+
+Object-migrations carry a sibling `{id}.meta.json` (ordinary migrations never have one):
+
+```json
+{
+  "object": "notifications/views/v-not-pending",
+  "sourceChecksum": "9f2a…",
+  "forkedFrom": "20260611100000-add-pending-view"
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `object` | The object identity — **this is the migration ↔ object link**. |
+| `sourceChecksum` | SHA-256 of the object file at generation time (drift detection). |
+| `forkedFrom` | **Tenant overrides only.** The `migration_id` of the common version this fork is based on (see [fork drift](#fork-drift)). Absent on common objects. |
+
+The `migrations` **table is unchanged** — no new columns. The object link, `forkedFrom`, and override suppression all live on disk.
+
+---
+
+## Multi-Tenant
+
+When a `tenants/` folder exists, each environment can have an **overlay** that mirrors the root structure and holds only its **delta**. The common root is applied to everyone; the overlay adds the tenant-specific bits. **The environment name *is* the tenant name** — for environment `E`, migris looks for `tenants/E/`:
+
+- `migris apply homolog` → no `tenants/homolog/` → applies **only the common** timeline.
+- `migris apply acme` → `tenants/acme/` exists → applies **common + acme overlay**.
+
+```
+pandora/
+├─ migrations/            ← COMMON (applied to all tenants)
+├─ objects/               ← COMMON
+└─ tenants/
+   └─ acme/
+      ├─ migrations/notifications/20260610-...-add-sla/   ← additive delta
+      └─ objects/notifications/views/v-not-pending.sql    ← object OVERRIDE
+```
+
+### Object overrides & suppression
+
+There are two ways a tenant can diverge:
+
+| Form | Versioned migration | Object |
+|------|---------------------|--------|
+| **Additive** (overlay adds something new) | ✅ | ✅ |
+| **Override** (shadow a common object) | ❌ not allowed | ✅ allowed |
+
+Override is only for **objects**. When a tenant overrides an object (via `create-object … --tenant <env>`), migris **suppresses the common object-migrations of that object** for that tenant — the tenant **owns the object's lineage** from that point (its first override `down` is therefore a `DROP`). Structural divergence per tenant is always **additive** — you never rewrite history per tenant.
+
+### Fork drift
+
+- Object **not** overridden → the tenant gets common improvements **automatically** (the common migration runs everywhere).
+- Object **overridden** (forked) → updates are **not** automatic. migris tracks an explicit `forkedFrom` pointer and **warns** when the fork falls behind, showing the **upstream diff** so you can reconcile by hand.
+
+The pointer is only advanced by an explicit **reconcile**:
+
+```bash
+migris create-object notifications/views/v-not-pending --tenant acme --rebase
+```
+
+`--rebase` regenerates the override **and** advances `forkedFrom` to the current common version — clearing the alert. Regenerating the override for any *other* reason never clears it (no silent drift). Use [`migris drift`](#migris-drift-env) to see the radar.
+
+---
+
+## Eject
+
+Eject extracts a slice of the project into a **standalone migris**. There are two orthogonal axes (and the cell where they meet):
+
+| Eject | Slice | Produces |
+|-------|-------|----------|
+| **Module** (`--module`, vertical) | one module + `default` | a service (e.g. a notifications microservice) |
+| **Tenant** (`--tenant`, horizontal) | one tenant's fully-resolved row | a dedicated single-tenant deployment of that client |
+| **Cell** (`--module` + `--tenant`) | a module in a tenant's variant | a service already in the client's variant |
+
+```bash
+migris eject --module notifications --out ../notif-service     # vertical
+migris eject --tenant  acme         --out ../acme-standalone    # horizontal
+migris eject --module notifications --tenant acme --out ...     # cell
+migris eject notifications --out ../notif-service               # sugar for --module
+```
+
+- **Module eject** keeps the module's **schema** intact (no SQL rewrite), drags `default` along, and emits a **template** `config.json` for the new service DB.
+- **Tenant eject** resolves the overlay over the whole base into a single-tenant project, **preserving every `migration_id`**. Because the ids are identical, the ejected project **recognizes the tenant's existing database** — `migris check prod` reports everything applied, so you get a **cutover with no downtime**. Overridden objects are written as canonical objects (the `tenants/` concept disappears); a `config.json` is emitted pointing at the tenant's DB (password blanked). It runs a [drift](#migris-drift-env) pre-check and **warns** if you'd be freezing divergent state.
+- **`--squash`** (optional, advanced) collapses everything into a single baseline migration. Only sound for a **brand-new** database — it breaks the cutover against an existing one.
+
+> Eject is a **copy, not a change** — it does not remove the module/overlay from the monolith. After ejecting, the repos diverge.
+
+---
+
 ## Commands
 
 ### `migris init [env]`
@@ -170,14 +341,14 @@ mg init dev     # same command using the short alias
 
 ---
 
-### `migris create <name>`
+### `migris create <name> [--module <m>]`
 
 Creates a new migration folder with empty `up.sql` and `down.sql` files.
 
 ```bash
 migris create create-users-table
 migris create add-email-column
-mg create drop-legacy-indexes
+migris create create-schema-identity --module identity   # modular project
 ```
 
 **Name validation:**
@@ -190,13 +361,57 @@ Valid examples: `create-users`, `add-column-v2`, `init`
 
 Invalid examples: `CreateUsers`, `create_users`, `create users`, `-start`, `end-`
 
-**Generated structure:**
+**`--module <m>`** (see [Modules](#modules)):
+- In a **modular** project, `--module` is **required**.
+- In an established **flat** project, `--module` is **rejected**.
+- In an **empty** project, passing `--module` bootstraps a modular layout.
+
+The generated `migration_id` (timestamp + name) must be **globally unique** across all modules and tenant overlays.
+
+**Generated structure (modular):**
 
 ```
 migrations/
-`-- 20250523120000-create-users-table/
-    |-- 20250523120000-create-users-table.up.sql
-    `-- 20250523120000-create-users-table.down.sql
+`-- identity/
+    `-- 20250523120000-create-schema-identity/
+        |-- 20250523120000-create-schema-identity.up.sql
+        `-- 20250523120000-create-schema-identity.down.sql
+```
+
+---
+
+### `migris create-object <object> [name]`
+
+Compiles an [object](#versioned-objects) source file into a migration. **Offline — never touches the database.**
+
+```bash
+# Edit objects/notifications/views/v-not-pending.sql first, then:
+migris create-object notifications/views/v-not-pending add-pending-view
+```
+
+- `<object>` is the object identity (its path under `objects/` without `.sql`). The destination module is derived from it.
+- **v1** (no prior version): `up` is a literal copy of the source; `down` is a **placeholder you fill in** (usually a `DROP`).
+- **v2+**: `up` is the new version; `down` is the **previous version's `up`**, generated automatically.
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--amend` | Rewrite the object's **most recent** migration in place (a draft loop), instead of creating a new version. Omit the `name`. |
+| `--tenant <env>` | Compile from the tenant overlay (`tenants/<env>/objects/...`) as an **override**. Writes `forkedFrom` in the `.meta.json`. |
+| `--rebase` | Reconcile a tenant override: regenerate it **and advance** `forkedFrom` to the current common version (clears the [drift](#fork-drift) alert). Use with `--tenant`; omit the `name`. |
+| `--dry-run` | Print the `up`/`down`/`meta` that would be generated, without writing anything. |
+
+**Typical dev loop:**
+
+```bash
+# edit the object
+migris create-object notifications/procedures/sp-enqueue tune-enqueue
+migris apply local                # a compile error shows up in YOUR terminal
+
+# fix the object, then overwrite the draft in place
+migris create-object notifications/procedures/sp-enqueue --amend
+migris apply local                # reapply
 ```
 
 ---
@@ -326,6 +541,76 @@ mg check prod --json
   # exits 2 and fails the pipeline if there are pending migrations
 ```
 
+`check` also surfaces [boundary](#modules) warnings before connecting.
+
+---
+
+### `migris validate [--strict]`
+
+Checks [module boundaries](#modules): flags any migration in module `M` that references another module's schema (references to `default` are always allowed). It also warns about **orphan overlays** — a `tenants/<env>/` folder with no matching environment in `config.json`. **Offline.**
+
+```bash
+migris validate            # reports violations as warnings
+migris validate --strict   # exits non-zero on any boundary violation (CI gate)
+migris validate --json
+```
+
+It is a best-effort heuristic (comments and string literals are ignored) — the goal is to catch accidental coupling, not to be a full SQL parser.
+
+---
+
+### `migris drift <env>`
+
+Lists overridden objects in a tenant that have fallen **behind** the common version (the fork radar), with the upstream diff to reconcile. **Offline.**
+
+```bash
+migris drift acme
+migris drift acme --strict   # exits non-zero if any fork is behind (CI gate)
+migris drift acme --json
+```
+
+The alert only clears when you run `create-object … --tenant acme --rebase`. See [Fork drift](#fork-drift).
+
+---
+
+### `migris environments`
+
+Lists the environments declared in `config.json`. **Offline.** With `--json` it feeds a dynamic CI matrix.
+
+```bash
+migris environments
+migris environments --json
+```
+
+```json
+[
+  { "name": "acme", "tenant": true, "database": "pandora_acme" },
+  { "name": "homolog", "tenant": false, "database": "pandora_homolog" }
+]
+```
+
+---
+
+### `migris eject`
+
+Extracts a module and/or a tenant into a standalone migris project. **Offline.** See [Eject](#eject) for the full model.
+
+```bash
+migris eject --module notifications --out ../notif-service
+migris eject --tenant  acme         --out ../acme-standalone
+migris eject --module notifications --tenant acme --out ../acme-notif
+migris eject notifications --out ../notif-service     # positional sugar for --module
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--module <m>` | Eject a module + `default` (vertical). |
+| `--tenant <env>` | Eject a fully-resolved tenant (horizontal, cutover-friendly). |
+| `--out <path>` | Destination directory (required). |
+| `--squash` | Collapse the selection into a single baseline migration (new DB only). |
+
 ---
 
 ## Global Flags
@@ -454,6 +739,12 @@ npm run test:watch
 | `rollback.test.ts` | Dry-run, transaction calls, error handling, `targetMigrationId` |
 | `status.test.ts` | Status symbols, batch display, `--limit`, `--all`, JSON output |
 | `check.test.ts` | Pending detection, exit codes, JSON output |
+| `discovery.test.ts` | Mode detection, recursive discovery, merge-sort, overlay & suppression |
+| `create-object.test.ts` | v1 placeholder / v2+ auto-down, `--amend`, `--dry-run`, `.meta.json`, `forkedFrom` |
+| `drift.test.ts` | Behind detection, upstream diff, `--rebase` advances pointer, no silent clear |
+| `tenants.test.ts` | Common-only vs common+overlay apply, override suppression |
+| `boundary.test.ts` | Cross-module detection, `default` allowed, `--strict` fails |
+| `eject.test.ts` | Module copy + ids, tenant resolution + cutover ids, drift warning, squash |
 
 ---
 
@@ -479,26 +770,31 @@ src/
 |-- prompt.ts             # interactive confirmation
 |-- config.ts             # config.json loader + ENV var overrides
 |-- db.ts                 # PostgreSQL client factory
+|-- discovery.ts          # migration discovery, modes, effective list + suppression
+|-- objects.ts            # object identity & destination helpers
+|-- boundary.ts           # cross-module boundary scan
+|-- eject.ts              # file-copy / config / squash helpers
 `-- commands/
-    |-- init.ts           # migris init / mg init
-    |-- create.ts         # migris create / mg create
-    |-- apply.ts          # migris apply / mg apply
-    |-- rollback.ts       # migris rollback / mg rollback
-    |-- status.ts         # migris status / mg status
-    `-- check.ts          # migris check / mg check
+    |-- init.ts           # migris init
+    |-- create.ts         # migris create (+ --module)
+    |-- create-object.ts  # migris create-object (+ --amend/--tenant/--rebase/--dry-run)
+    |-- apply.ts          # migris apply
+    |-- rollback.ts       # migris rollback
+    |-- status.ts         # migris status
+    |-- check.ts          # migris check
+    |-- validate.ts       # migris validate
+    |-- drift.ts          # migris drift
+    |-- environments.ts   # migris environments
+    `-- eject.ts          # migris eject
 
 tests/
-|-- errors.test.ts
-|-- logger.test.ts
-|-- checksum.test.ts
-|-- config.test.ts
-|-- prompt.test.ts
-|-- create.test.ts
-|-- init.test.ts
-|-- apply.test.ts
-|-- rollback.test.ts
-|-- status.test.ts
-`-- check.test.ts
+|-- helpers/fixtures.ts   # temp-dir project builders
+|-- errors.test.ts        logger.test.ts        checksum.test.ts
+|-- config.test.ts        prompt.test.ts        init.test.ts
+|-- create.test.ts        apply.test.ts         rollback.test.ts
+|-- status.test.ts        check.test.ts
+|-- discovery.test.ts     create-object.test.ts drift.test.ts
+|-- tenants.test.ts       boundary.test.ts      eject.test.ts
 
 .github/
 `-- workflows/

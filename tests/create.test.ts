@@ -161,4 +161,50 @@ describe("createMigration", () => {
       expect(output).toContain("test-migration");
     });
   });
+
+  describe("modules", () => {
+    function seedModular() {
+      const dir = path.join(tmpDir, "migrations", "default", "20260101000000-ext");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "20260101000000-ext.up.sql"), "SELECT 1;");
+      fs.writeFileSync(path.join(dir, "20260101000000-ext.down.sql"), "SELECT 0;");
+    }
+
+    it("requires --module in a modular project", () => {
+      seedModular();
+      expect(() => createMigration("add-thing")).toThrow(MigrisError);
+    });
+
+    it("forbids --module in a flat project", () => {
+      const dir = path.join(tmpDir, "migrations", "20260101000000-flat");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "20260101000000-flat.up.sql"), "SELECT 1;");
+      fs.writeFileSync(path.join(dir, "20260101000000-flat.down.sql"), "SELECT 0;");
+      expect(() => createMigration("add-thing", { module: "identity" })).toThrow(MigrisError);
+    });
+
+    it("creates the migration under the module folder", () => {
+      seedModular();
+      createMigration("create-notification", { module: "notifications" });
+      const entries = fs.readdirSync(path.join(tmpDir, "migrations", "notifications"));
+      expect(entries.some((e) => e.endsWith("-create-notification"))).toBe(true);
+    });
+
+    it("rejects a duplicate migration id across modules (global uniqueness)", () => {
+      seedModular();
+      // Pre-create an id, then force the same timestamp by mocking Date.
+      const dup = path.join(tmpDir, "migrations", "identity", "20991231235959-dupe");
+      fs.mkdirSync(dup, { recursive: true });
+      fs.writeFileSync(path.join(dup, "20991231235959-dupe.up.sql"), "SELECT 1;");
+      fs.writeFileSync(path.join(dup, "20991231235959-dupe.down.sql"), "SELECT 0;");
+      const realDate = global.Date;
+      // Freeze time so createMigration generates the colliding id.
+      vi.spyOn(global, "Date").mockImplementation(() => new realDate("2099-12-31T23:59:59Z") as unknown as Date);
+      try {
+        expect(() => createMigration("dupe", { module: "notifications" })).toThrow(MigrisError);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+  });
 });

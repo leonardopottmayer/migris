@@ -4,6 +4,7 @@ import { createConnectedClient } from "../db";
 import { log } from "../logger";
 import { confirm } from "../prompt";
 import { MigrisError } from "../errors";
+import { effectiveMigrations } from "../discovery";
 
 export interface RollbackOptions {
   dryRun?: boolean;
@@ -16,6 +17,11 @@ export async function rollbackMigrations(
   options: RollbackOptions = {}
 ): Promise<void> {
   const { dryRun = false, yes = false } = options;
+
+  // Resolve each migration_id to its folder on disk (across modules + overlay).
+  const dirById = new Map(
+    effectiveMigrations(process.cwd(), envName).map((m) => [m.id, m.dir])
+  );
 
   let client;
   try {
@@ -80,12 +86,8 @@ export async function rollbackMigrations(
     }
 
     for (const migrationId of migrations) {
-      const downPath = path.join(
-        process.cwd(),
-        "migrations",
-        migrationId,
-        `${migrationId}.down.sql`
-      );
+      const dir = dirById.get(migrationId) ?? path.join(process.cwd(), "migrations", migrationId);
+      const downPath = path.join(dir, `${migrationId}.down.sql`);
 
       if (!fs.existsSync(downPath)) {
         log.error(`down.sql not found for ${migrationId}`);

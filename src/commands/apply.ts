@@ -5,6 +5,7 @@ import { computeChecksum } from "../checksum";
 import { log } from "../logger";
 import { confirm } from "../prompt";
 import { MigrisError } from "../errors";
+import { effectiveMigrations } from "../discovery";
 
 export interface ApplyOptions {
   dryRun?: boolean;
@@ -19,19 +20,19 @@ export async function applyMigrations(envName: string, options: ApplyOptions = {
     throw new MigrisError('migrations/ directory not found. Run "migris init" first.');
   }
 
-  const allEntries = fs.readdirSync(migrationsDir).filter((entry) => {
-    return fs.statSync(path.join(migrationsDir, entry)).isDirectory();
-  });
-
-  const folders = allEntries.sort();
+  // Effective list: common + tenant overlay (with override suppression), merge-sorted
+  // by timestamp. For a flat single-tenant project this is identical to today's
+  // one-level listing.
+  const migrations = effectiveMigrations(process.cwd(), envName);
+  const folders = migrations.map((m) => m.id);
+  const dirById = new Map(migrations.map((m) => [m.id, m.dir]));
 
   // Validate that every migration folder has both up.sql and down.sql.
   const invalid: string[] = [];
-  for (const folder of folders) {
-    const base = path.join(migrationsDir, folder);
-    const hasUp = fs.existsSync(path.join(base, `${folder}.up.sql`));
-    const hasDown = fs.existsSync(path.join(base, `${folder}.down.sql`));
-    if (!hasUp || !hasDown) invalid.push(folder);
+  for (const m of migrations) {
+    const hasUp = fs.existsSync(path.join(m.dir, `${m.id}.up.sql`));
+    const hasDown = fs.existsSync(path.join(m.dir, `${m.id}.down.sql`));
+    if (!hasUp || !hasDown) invalid.push(m.id);
   }
 
   if (invalid.length > 0) {
@@ -69,7 +70,7 @@ export async function applyMigrations(envName: string, options: ApplyOptions = {
         const recorded = rows[0]?.checksum;
         if (recorded) {
           const current = computeChecksum(
-            fs.readFileSync(path.join(migrationsDir, folder, `${folder}.up.sql`), "utf8")
+            fs.readFileSync(path.join(dirById.get(folder)!, `${folder}.up.sql`), "utf8")
           );
           if (current !== recorded) {
             log.warn(`Checksum mismatch on already-applied migration: ${folder}`);
@@ -101,7 +102,7 @@ export async function applyMigrations(envName: string, options: ApplyOptions = {
 
     for (const folder of pending) {
       const upSql = fs.readFileSync(
-        path.join(migrationsDir, folder, `${folder}.up.sql`),
+        path.join(dirById.get(folder)!, `${folder}.up.sql`),
         "utf8"
       );
       const checksum = computeChecksum(upSql);

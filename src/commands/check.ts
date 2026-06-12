@@ -3,6 +3,8 @@ import path from "path";
 import { createConnectedClient } from "../db";
 import { log, isJsonMode } from "../logger";
 import { MigrisError } from "../errors";
+import { effectiveMigrations } from "../discovery";
+import { warnBoundaryViolations } from "../boundary";
 
 /**
  * Compares migrations on disk with those applied in the database.
@@ -18,10 +20,10 @@ export async function checkMigrations(envName: string): Promise<void> {
     throw new MigrisError('migrations/ directory not found. Run "migris init" first.');
   }
 
-  const onDisk = fs
-    .readdirSync(migrationsDir)
-    .filter((e) => fs.statSync(path.join(migrationsDir, e)).isDirectory())
-    .sort();
+  // Surface accidental cross-module coupling as a warning (non-blocking, §16.7).
+  if (!isJsonMode()) warnBoundaryViolations(process.cwd());
+
+  const onDisk = effectiveMigrations(process.cwd(), envName).map((m) => m.id);
 
   let client;
   try {
