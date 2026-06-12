@@ -25,7 +25,7 @@
     "url": "git+https://github.com/leonardopottmayer/migris.git"
   },
   "author": "Leonardo Gian Pottmayer",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/leonardopottmayer/migris/issues"
   },
